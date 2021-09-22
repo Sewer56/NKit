@@ -113,8 +113,8 @@ namespace Nanook.NKit
                     if (ns.IsNkit) //ToIso from GC - NKit
                     {
                         p.Add(new Processor(new NkitReaderGc(), new IsoWriter(), "To ISO", this, true, false, ProcessorSizeMode.Image));
-                        p[0].Reader.RequireValidationCrc = true;
-                        p[0].Reader.RequireVerifyCrc = true; //verify the nkit read
+                        p[0].Reader.RequireValidationCrc = false;
+                        p[0].Reader.RequireVerifyCrc = false; //verify the nkit read
                         p[0].Reader.VerifyIsWrite = false; //read verify
                     }
                     else //ToIso from GC - ISO, ISO.DEC
@@ -128,8 +128,8 @@ namespace Nanook.NKit
                     if (ns.IsNkit) //ToIso from Wii - NKit
                     {
                         p.Add(new Processor(new NkitReaderWii(), new IsoWriter(), "To ISO", this, true, false, ProcessorSizeMode.Image));
-                        p[0].Reader.RequireValidationCrc = true;
-                        p[0].Reader.RequireVerifyCrc = true; //verify the nkit read
+                        p[0].Reader.RequireValidationCrc = false;
+                        p[0].Reader.RequireVerifyCrc = false; //verify the nkit read
                         p[0].Reader.VerifyIsWrite = false; //read verify
                     }
                     else //ToIso from Wii - ISO, ISO.DEC, WBFS
@@ -416,103 +416,82 @@ namespace Nanook.NKit
                 TimeSpan ts = DateTime.Now - dt;
                 results.ProcessingTime = ts;
 
-                //FAIL
-                if (results.ValidateReadResult == VerifyResult.VerifyFailed || results.VerifyOutputResult == VerifyResult.VerifyFailed)
+                LogBlank();
+                Log(string.Format("Completed ~ {0}m {1}s  [MiB:{2:#.0}]", ((int)ts.TotalMinutes).ToString(), ts.Seconds.ToString(), (results.OutputSize / (double)(1024 * 1024))));
+                LogBlank();
+                Log("RESULTS");
+                Log("-------------------------------------------------------------------------------");
+
+                uint finalCrc = results.ValidationCrc != 0 ? results.ValidationCrc : results.OutputCrc;
+                string mask = _context.Settings.MatchFailRenameToMask;
+                results.OutputFileExt = "." + SourceFiles.ExtensionString(false, false, toNkit, nkitFormat == NkitFormatType.Gcz).ToLower();
+                results.RedumpInfo = _context.Dats.GetRedumpEntry(_context.Settings, _context.Dats, finalCrc);
+                if (results.RedumpInfo.MatchType == MatchType.Redump || results.RedumpInfo.MatchType == MatchType.Custom)
                 {
-                    LogBlank();
-                    Log(string.Format("Verification Failed Crc:{0} - Failed Test Crc:{1}", results.OutputCrc.ToString("X8"), results.ValidationCrc.ToString("X8")));
-
-                    if (lastTmp != null) //only null when verify only
-                    {
-                        Log("Deleting Output" + (Settings.OutputLevel != 3 ? "" : " (Skipped as OutputLevel is 3:Debug)"));
-                        results.OutputFileName = null;
-                        if (Settings.OutputLevel != 3)
-                            File.Delete(lastTmp);
-
-                        LogBlank();
-                    }
+                    Log(string.Format("{0} [{1} Name]", results.RedumpInfo.MatchName, results.RedumpInfo.MatchType.ToString()));
+                    if (results.IsRecoverable)
+                        Log(string.Format("Missing Recovery data is required to correctly restore this image!", results.RedumpInfo.MatchName, results.RedumpInfo.MatchType.ToString()));
+                    mask = results.RedumpInfo.MatchType == MatchType.Custom ? _context.Settings.CustomMatchRenameToMask : _context.Settings.RedumpMatchRenameToMask;
                 }
-                else //SUCCESS
+                else
+                    Log(string.Format("CRC {0} not in Redump or Custom Dat", finalCrc.ToString("X8")));
+                LogBlank();
+
+
+                outputResults(results);
+
+
+                if (lastTmp != null) //only null when verify only
                 {
-
-                    LogBlank();
-                    Log(string.Format("Completed ~ {0}m {1}s  [MiB:{2:#.0}]", ((int)ts.TotalMinutes).ToString(), ts.Seconds.ToString(), (results.OutputSize / (double)(1024 * 1024))));
-                    LogBlank();
-                    Log("RESULTS");
-                    Log("-------------------------------------------------------------------------------");
-
-                    uint finalCrc = results.ValidationCrc != 0 ? results.ValidationCrc : results.OutputCrc;
-                    string mask = _context.Settings.MatchFailRenameToMask;
-                    results.OutputFileExt = "." + SourceFiles.ExtensionString(false, false, toNkit, nkitFormat == NkitFormatType.Gcz).ToLower();
-                    results.RedumpInfo = _context.Dats.GetRedumpEntry(_context.Settings, _context.Dats, finalCrc);
-                    if (results.RedumpInfo.MatchType == MatchType.Redump || results.RedumpInfo.MatchType == MatchType.Custom)
+                    if (testMode)
                     {
-                        Log(string.Format("{0} [{1} Name]", results.RedumpInfo.MatchName, results.RedumpInfo.MatchType.ToString()));
-                        if (results.IsRecoverable)
-                            Log(string.Format("Missing Recovery data is required to correctly restore this image!", results.RedumpInfo.MatchName, results.RedumpInfo.MatchType.ToString()));
-                        mask = results.RedumpInfo.MatchType == MatchType.Custom ? _context.Settings.CustomMatchRenameToMask : _context.Settings.RedumpMatchRenameToMask;
+                        Log("TestMode: Deleting Output");
+                        results.OutputFileName = null;
+                        if (File.Exists(lastTmp))
+                            File.Delete(lastTmp);
+                    }
+                    else if (isRecovery && _context.Settings.RecoveryMatchFailDelete && results.RedumpInfo.MatchType == MatchType.MatchFail)
+                    {
+                        Log("Failed to Recover to Dat Entry: Deleting Output");
+                        results.OutputFileName = null;
+                        File.Delete(lastTmp);
                     }
                     else
-                        Log(string.Format("CRC {0} not in Redump or Custom Dat", finalCrc.ToString("X8")));
-                    LogBlank();
-
-
-                    outputResults(results);
-
-
-                    if (lastTmp != null) //only null when verify only
                     {
-                        if (testMode)
+                        if (renameWithMasks)
                         {
-                            Log("TestMode: Deleting Output");
-                            results.OutputFileName = null;
-                            if (File.Exists(lastTmp))
-                                File.Delete(lastTmp);
-                        }
-                        else if (isRecovery && _context.Settings.RecoveryMatchFailDelete && results.RedumpInfo.MatchType == MatchType.MatchFail)
-                        {
-                            Log("Failed to Recover to Dat Entry: Deleting Output");
-                            results.OutputFileName = null;
-                            File.Delete(lastTmp);
+                            results.OutputFileName = _context.Dats.GetFilename(results, mask);
+                            Log("Renaming Output Using Masks");
                         }
                         else
                         {
-                            if (renameWithMasks)
-                            {
-                                results.OutputFileName = _context.Dats.GetFilename(results, mask);
-                                Log("Renaming Output Using Masks");
-                            }
-                            else
-                            {
-                                results.OutputFileName = SourceFiles.GetUniqueName(sourceFile.CreateOutputFilename(results.OutputFileExt));
-                                Log("Renaming Output Based on Source File" + (sourceFile.AllFiles.Count() > 1 ? "s" : ""));
-                            }
-                            LogBlank();
-
-                            string path = Path.GetDirectoryName(results.OutputFileName);
-                            if (!Directory.Exists(path))
-                                Directory.CreateDirectory(path);
-
-                            File.Move(lastTmp, results.OutputFileName);
-
-                            Log(string.Format("Output: {0}", Path.GetDirectoryName(results.OutputFileName)));
-                            Log(string.Format("    {0}", Path.GetFileName(results.OutputFileName)));
-
-                            //double check test mode just to be sure
-                            if (_context.Settings.DeleteSource && !testMode && results.VerifyOutputResult == VerifyResult.VerifySuccess)
-                            {
-                                LogBlank();
-                                Log("Deleting Source:");
-                                foreach (string s in sourceFile.AllFiles.Length == 0 ? new string[] { sourceFile.FilePath } : sourceFile.AllFiles)
-                                {
-                                    Log(string.Format("    {0}", s));
-                                    File.Delete(s);
-                                }
-                            }
+                            results.OutputFileName = SourceFiles.GetUniqueName(sourceFile.CreateOutputFilename(results.OutputFileExt));
+                            Log("Renaming Output Based on Source File" + (sourceFile.AllFiles.Count() > 1 ? "s" : ""));
                         }
                         LogBlank();
-                    }
 
+                        string path = Path.GetDirectoryName(results.OutputFileName);
+                        if (!Directory.Exists(path))
+                            Directory.CreateDirectory(path);
+
+                        File.Move(lastTmp, results.OutputFileName);
+
+                        Log(string.Format("Output: {0}", Path.GetDirectoryName(results.OutputFileName)));
+                        Log(string.Format("    {0}", Path.GetFileName(results.OutputFileName)));
+
+                        //double check test mode just to be sure
+                        if (_context.Settings.DeleteSource && !testMode && results.VerifyOutputResult == VerifyResult.VerifySuccess)
+                        {
+                            LogBlank();
+                            Log("Deleting Source:");
+                            foreach (string s in sourceFile.AllFiles.Length == 0 ? new string[] { sourceFile.FilePath } : sourceFile.AllFiles)
+                            {
+                                Log(string.Format("    {0}", s));
+                                File.Delete(s);
+                            }
+                        }
+                    }
+                    LogBlank();
                 }
             }
             catch (Exception ex)
